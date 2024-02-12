@@ -1,0 +1,432 @@
+---
+title: "R Notebook for conducting Minimum Detectable Change (MDC) Analysis to design a monitoring strategy for the Upper Yaquina River TMDL Implementation Plan"
+output: html_notebook
+---
+
+# Set up R session
+
+There are conflicts among some of the tidyverse package and other packages. To resolve this I used the "conflicted" package to say which package I prefer for conflicted functions.
+
+```{r}
+library(conflicted) 
+conflict_prefer("filter", "dplyr")
+conflict_prefer("lag", "dplyr")
+```
+
+# Load packages used in notebook
+
+```{r}
+
+result_tv <- library(tidyverse)
+result_ggp <- library(ggplot2)
+results_mts <- library(moments)
+results_ptw <- library(patchwork)
+results_bt <- library(boot)
+results_br <- library(broom)
+results_sc <- library(scales)
+```
+
+# Bacteria Data
+
+Read bacteria data from "CSV" file
+
+```{r}
+df <- read.csv("UpperYaquinaBacteria.csv")
+```
+
+Check the classes of the columns in the data frame
+
+```{r}
+str(df)
+```
+
+Make "STATION" column a character class for use as a category
+
+```{r}
+df$STATION <- as.character(df$STATION)
+```
+
+The "date" column is currently a character type and we need a date/time type.
+
+```{r}
+df$date <- as.Date(df$date, format = "%Y-%m-%d")
+```
+
+Check the classes again
+
+```{r}
+str(df)
+```
+
+# Explore Data
+
+The log10 transformation is essential in analyzing bacteria count data, which often has a wide range and right-skewed distribution. This transformation normalizes the data, making it suitable for statistical methods that assume normality. It also stabilizes the variance, addressing the issue of heteroscedasticity. By compressing the range of values, it makes the data more manageable for analysis. This is particularly relevant as bacterial growth is exponential, and log scales can reflect underlying biological processes more accurately.
+
+I used I used box-plots first to visually assess the distribution of the data by station
+
+```{r}
+boxplot_org <- ggplot(df, aes(x = STATION, y = EC_val, fill = STATION)) + 
+  geom_boxplot() +
+  labs(title = "Boxplot by Station",
+       x = "Station",
+       y = "E. Coli Concentration (cfu/100 ml)") +
+  scale_fill_brewer(palette = "Pastel1") +  # Change color palette
+  theme_minimal()  # Use a minimal theme +
+  coord_fixed(ratio = 1)  # Preserve aspect ratio
+plot(boxplot_org)
+```
+
+Apply the log10 transformation of the E. coli values and plot as boxplots (Make Y-axis log using semi-log settings)
+
+```{r}
+boxplot_log10 <- ggplot(df, aes(x = STATION, y = EC_val, fill = STATION)) + 
+  geom_boxplot() +
+  scale_y_log10() +
+  labs(title = "Boxplot by Station",
+       x = "Station",
+       y = "Log10 of E. Coli Concentration (cfu/100 ml)") +
+  scale_fill_brewer(palette = "Pastel1") +  # Change color palette
+  theme_minimal()  # Use a minimal theme +
+  coord_fixed(ratio = 1)  # Preserve aspect ratio
+plot(boxplot_log10)
+```
+
+Compare boxplots side by side
+
+```{r}
+boxplot_org + boxplot_log10 + plot_layout(ncol = 2)
+```
+
+To look at if the raw data is meeting the normal distribution assumption further, I calculated several descriptive statistics for the E. coli data by station.
+
+```{r}
+# Calculate statistics by category
+stats_by_category <- df %>%
+  group_by(STATION) %>%
+  summarise(
+    N = n(),
+    Mean = round(mean(EC_val, na.rm = TRUE), 0),
+    Median = round(median(EC_val, na.rm = TRUE), 0),
+    SD = round(sd(EC_val, na.rm = TRUE), 2),
+    Skew = round(skewness(EC_val, na.rm = TRUE), 2),
+    Kurtosis = round(kurtosis(EC_val, na.rm = TRUE), 2)
+    
+  )
+  print(stats_by_category)
+```
+
+Next, I calculated several descriptive statistics for the E. coli data by station to see how well we meet the normal distribution assumption further.
+
+```{r}
+# Calculate statistics by category
+stats_by_category_log10 <- df %>%
+  group_by(STATION) %>%
+  summarise(
+    N = n(),
+    Mean = round(mean(log10(EC_val), na.rm = TRUE), 2),
+    Median = round(median(log10(EC_val), na.rm = TRUE), 2),
+    SD = round(sd(log10(EC_val), na.rm = TRUE), 4),
+    Skew = round(skewness(log10(EC_val), na.rm = TRUE), 4),
+    Kurtosis = round(kurtosis(log10(EC_val), na.rm = TRUE), 4)
+    
+  )
+  print(stats_by_category_log10)
+```
+
+Skewness and kurtosis are fixed characteristics: the skewness is always 0 (indicating a symmetric distribution), and the kurtosis is always 3 (or, if you're using excess kurtosis, it's 0, since excess kurtosis is kurtosis minus 3). I compared the orginal skewness and kurtosis of the orginal and log10 data by to the values of 0 for skewness and 3 for kurtosis. I subtracted 3 from the estimated kurtosis values to see how much excess from the normal distribution there is.
+
+```{r}
+s_k_compare <- # Selecting and combining specific columns
+  stats_by_category %>% select(STATION)
+s_k_compare <- s_k_compare %>%
+  bind_cols(stats_by_category %>% select(N))
+s_k_compare <- s_k_compare %>%
+  bind_cols(stats_by_category %>% select(Skew))
+s_k_compare <- s_k_compare %>%
+  bind_cols(stats_by_category_log10 %>% select(Skew))
+s_k_compare <- s_k_compare %>%
+  bind_cols(stats_by_category %>% select(Kurtosis) - 3)
+s_k_compare <- s_k_compare %>%
+  bind_cols(stats_by_category_log10 %>% select(Kurtosis) - 3)
+names(s_k_compare) <- c("STATION", "N", "Skew Original", "Skew Log10", "Kurtosis Orginal - 3", "Kutosis Log10 - 3")
+print(s_k_compare)
+```
+
+Looking at the above table, one can see that the skew (closer to 0 the better) and the kurtosis (closer to zero the better) that the log10 satisfy the conditions of the normal distribution better than the original data. Based on the visual comparison of the original and log10 transformed boxplots and the results provided from the skew and kutosis estimates, I will proceed with the remainder of the analysis using the log10 transformed data. I will transform the results needed from the remaining analysis to the original scale where necessary.
+
+(Comparing the cumulative distribution functions (CDFs) of the original data, its log10 transformation, and a standard normal distribution can help assess if the log10 transformation aligns with the normality assumption. This comparison can highlight whether extreme right-tail values, still noticeable in boxplots of the log10 transformed data, might violate normality conditions.)
+
+I created a data frame from the original data containing the log10 transformed E. coli values to reduce the amount of code and the potential for errors in the remaining analysis.
+
+```{r}
+if(exists("df_log10")) {rm(df_log10)}
+
+df_log10 <- df %>% select(STATION, date)
+df_log10 <- df_log10 %>% bind_cols(df %>% select(EC_val))
+df_log10 <- df_log10 %>%  mutate(EC_val = log10(EC_val))
+names(df_log10) <- c("STATION", "date", "log10_EC_val")
+```
+
+I cannot performed analysis for autocorrelation for the E. coli data because the time-step between the observations. There are methods to attempt to accommodate varying time-step, but these methods require either developing time-series models or resampling methods. There is not enough observations at some of the stations (station 12301 has only 12 observations and stations 34455 and 34456 only have 11 observations). However, the autocorrelation of the residuals of the linear regression models will be investigated. This autocorrelation does not depend on the time an observation was collected. The residuals are calculated by subtracting the estimated from the observed values. Ideally, residuals are completely random and follows a normal distribution with mean 0 and small as possible standard deviation. Autocorrelation of residuals indicates that more information may be in the data that is not captured by the model used in the linear regression analysis. Also, autocorrelation of residuals violates the random assumption of the tests used to estimate the probabilities and confidence limits of the model parameter estimates.
+
+# Minimum Detectable Change Analysis
+
+Next, I start the process of calculating Minimal Detectable Change (MDC).
+
+References Used Technical Memorandum #3 Minimum Detectable Change and Power Analysis, USEPA <https://www.epa.gov/sites/default/files/2015-10/documents/tech_memo_3_oct15.pdf> Nonpoint Source Pollution Monitoring: Additional Resources, USEPA Guidance: Monitoring and Evaluating Nonpoint Source Watershed Projects: Monitoring Guide and Supplemental Material, USEPA <https://www.epa.gov/nps/guidance-monitoring-and-evaluating-nonpoint-source-watershed-projects> above guidance document Chapter 3. Monitoring Plan Details, Section 3.4 Sampling Frequency and Duration, USEPA <https://www.epa.gov/sites/default/files/2016-06/documents/chapter_3_may_2016_508.pdf>, pages 3-43 to 3-56
+
+USEPA Monitoring Technotes: <https://www.epa.gov/nps/nonpoint-source-monitoring-technotes>
+
+## Estimate standard error for the slope estimate of a linear regression model
+
+```{r}
+# Linear regression by group
+results_lm <- df_log10 %>%
+  group_by(STATION) %>%
+  nest() %>%
+  mutate(model = map(data, ~ lm(log10_EC_val ~ date, data = .)),
+         tidied = map(model, broom::tidy)) %>%
+  select(-data, -model) %>%
+  unnest(tidied)
+#print(results)
+results_df_slp <- results_lm %>%
+  filter(term == "date")
+print(results_df_slp)
+
+# get standard errors of slope estimates by station for comparison later
+df_std_err <- data.frame(STATION = results_df_slp$STATION, std.error = results_df_slp$std.error)
+```
+
+In the context of linear regression, the terms "standard error of the slope estimate" and "standard deviation of the slope estimate" are often used interchangeably, but they technically refer to slightly different concepts. USEPA Technote 7 uses these two terms interchangeably.
+
+Standard Error of the Slope Estimate: This is a measure of the precision of the estimated slope coefficient in your linear regression model. It quantifies the variability of the slope estimate if you were to repeat your study multiple times with different samples. The standard error is calculated from the data and depends on the standard deviation of the errors (residuals) in the regression, the number of observations, and the variability of the values of your independent variable.
+
+## Compare standard error and deviation for the slope estimate of a linear regression model
+
+Standard Deviation of the Slope Estimate: In a strict statistical sense, this term could be interpreted as referring to the actual standard deviation of the distribution of slope estimates across multiple samples from the population. If you could hypothetically repeat your study an infinite number of times, collecting new samples each time, and calculate the slope each time, the standard deviation of these slopes would be the standard deviation of the slope estimate.
+
+In practice, when people refer to the "standard deviation of the slope estimate" in the context of a single regression analysis, they are usually talking about the standard error of the slope estimate. The standard error is what is typically reported in regression analysis to give an idea of the precision of the estimated coefficient. It's important for hypothesis testing (like testing whether the slope is significantly different from zero) and for constructing confidence intervals around the slope estimate.
+
+I used a bootstrap method to get an estimate of the standard deviation of the slope. The bootstrap method re samples the data into sub-data sets and estimates a slope for each. Then I calculate the standard deviation of the slope estimates. I do this by category to get estimates of the standard deviation of the slopes to compare to the standard errors,
+
+```{r}
+#create temporary data frame for methods using x, y, and category as column names because I am not fancy
+df_temp <- data.frame(x = df_log10$date, y = df_log10$log10_EC_val, category = df_log10$STATION)
+
+# Define the function to obtain the slope
+slope <- function(data, indices) {
+  d <- data[indices, ]  # Resample with replacement
+  fit <- lm(y ~ x, data = d)
+  return(coef(fit)[2])  # Return the slope
+}
+
+# Apply the bootstrap method for each category and store results
+results_bt <- lapply(split(df_temp, df_temp$category), function(subdata) {
+  boot(subdata, slope, R = 1000)
+})
+
+# Calculate and print the standard deviation of the slopes for each category
+std_dev_slopes <- sapply(results_bt, function(b) sd(b$t))
+df_std_dev <- data.frame(STATION = names(std_dev_slopes), std.dev = std_dev_slopes)
+row.names(df_std_dev) <- NULL
+print(df_std_dev)
+```
+
+Compare the estimates of the standard error and standard deviation of slope estimates
+
+```{r}
+# merge the results tables
+df_std <- inner_join(df_std_err, df_std_dev, by = "STATION")
+
+# calculate the percent difference between the standard error and deviation
+df_std <- cbind(df_std, perdiff = paste0(round(100 * (df_std$std.error - df_std$std.dev)/df_std$std.dev, 2), "%"))
+
+# add the number of observations for each station in the data set
+junk <- df %>%
+  group_by(STATION) %>%
+  summarise(N = n())
+
+df_std <- df_std %>% add_column(junk$N, .after = "STATION")
+names(df_std)[2] <- "N"
+
+print(df_std)
+```
+
+There are differences among the standard errors and deviations. I compared the differences in the standard error and standard deviation estimates as the ratio with the standard errors minus the standard deviations in the numerator and denominator are the standard deviations. I expressed these ratios as percent differences for each station. Differences are expected because these are estimates of both the standard errors and deviations. The sign and magnitude of the differences are important. For the sign, if it is positive, then the standard error estimate is larger than the standard deviation of the estimates. That is OK because the statistics used in the MDC estimation will be more conservative when using the standard error to calculate them rather than the smaller standard deviation of the slope estimates. However, if the sign is negative, the standard deviation of the slope estimates is smaller than the standard error based statistics used for calculating the MDC.This could lead over estimating the MDC for a monitoring design when picking number of samples, frequency of sampling and the duration of the sampling period to capture the expected response of the watershed to management action changes. That is why I next consider the magnitude of the difference.
+
+The magnitude of the differences vary across the stations. I added the number of samples for each station as an aid to investigate possible differences in the magnitudes. Why? For the stations 12301, 3445, and 34456, the differences is less than 0. So using the standard error is more conservative than using the standard deviations and I decided to use the standard errors for the MDC calculations for these stations. For stations 11476, 33112, 34454, the differences are positive, so using the standard errors may be more conservative than using the standard deviations. I want to point out that the number of samples at each of these stations is greater than the samples sizes at the stations where the differences where less than 0. For stations 34455 and 34456, the magnitudes of the differences is less than 5% and I decided to use the standard error in the MDC calculations for these stations because I don't think potential differences would lead to using the standard error would be much less conservative than using the standard deviations.
+
+The almost 20% difference in the magnitude for station 11476 could reduce the confidence we have in the MDC calculation using the standard error of the slope. This could result in the calculated MDC using the standard error would be almost 20% less than the MDC calculated using the standard deviations. The standard error is assumed to be larger than the standard deviation because the standard error is based on a slope estimate for one data set (e.g. one experiment). The standard deviation estimate is calculated from repetitions of and experiment and by the Central Limit Theorem, the standard deviation estimate should approach the "true" standard deviation of the slope for the slope of the "true" line. I put quotation makes around true because there are assumptions that need to be met for the linear model to represent the system under consideration with complete accuracy and precision, which can never be proved completely. The are several reasons that could cause the larger magnitude and the positive sign fo the difference between the standard error and deviation for station 11476. However, I can group the reasons into three general groups, which are: the approach and design of the bootstrapping method used to estimate the standard deviation; the design used to collect the data (duration of sampling, number of samples per year and the conditions when the samples are collected (e.g. what season or flow conditions)); and the model used for the linear regression. I used the bootstrapping method to approximate the repetitions of the experiment. I will leave aside the bootstrapping method causes because I am using the estimate of the standard deviation as a check if the standard error is good enough to use in the MDC calculation.
+
+The design used for data collection significantly affects the magnitude of standard error and deviation. This is crucial because the observed data is the only information I have used so far. These steps are part of calculating the MDC for station 11476. First, the duration of sampling not only helps determine the total number of samples, but more importantly determines if natural, managerial, and cultural cycles are captured, preferably multiple times.If any of these cycles are not fully captured in the sampling duration, slope estimates could be erroneous because they could represent the upward/downward component of a partial cycle rather than changes in slope due to management action changes implemented to lower bacteria loads. How would this relate to the magnitude difference between the standard error and deviation estimates? Likewise, number of samples per year and the conditions when the samples are collected (e.g. what season or flow conditions))
+
+## Evaluate the Regression Results
+
+Before proceeding to the MDC analysis, I want to see if the regression models are good capture enough of the variance of the sample data. I also want to see if there is already a signficant trend (non zero slope) in the data. If there is already a trend in the data, I need to consider how this trend cound affect the MDC calculations. I may need to remove the existing trends to get a better estimate of the MDC. This is commonly referred to detrending data.
+
+A positive trend may increase the magnitude of MDC, which would indicate I need more samples and/or longer suration of sampling than needed. This is especially true if a proposed management action change could remove the cause of the positive trend. I could detrend the data and calculate an MDC for both the original samples and then one for the detreneded data. Two different sampling designs (number of samples and duration) could then be used based on what the effects of the management action changes will have on the E. coli levels. For instance, I could require more samples based on the MDC for the original data for the duration that I think it would take the management actions to take effect in lowering E. coli levels in the stream. After that duration, I could use the number of samples based on the MDC for the trended data only if I detect the trend of the data is decreasing using the previouly collected data based on the samples collected after the management changes. This apporach could provide a cost reduction in the collect and analysis of samples, but more importantly provides information need to establish a milestone in the process to make a decission whether the management changes are having the desired effect (lowering E. coli levels) or not. We would make an informed decision on wether more/different management actions are need based on the MDC of the original data and continue with the number of samples and duration from that analsysis.
+
+A negative trend may cause us to hold of on implementation for this station. We could then design a monitoring plan using the MDC of the original data with the negative trend detected. I could forecast how long it would take to meet our TMDL target. I would have an estimate in the confidence (assigned as a confidence level from the regression used to make the forecast), which is based on the MDC I used to design the monitoring plan. I could then make an informed decesion from the level of confidnece I calaculate for the duration to meet the target, which calculation of the MDC makes possible.
+
+If the If the E. coli levels are not predicted to decrease based on the samples collected after the magnagement changes, How do I do this? I used a vsiual assessment by comparing the regression lines to the sample data in plots.
+
+```{r}
+
+# Extract slope and intercept
+intercept <- results_lm %>% 
+  filter(STATION == "11476") %>% 
+  filter(term == "(Intercept)") %>% pull(estimate)
+slope <- results_lm %>% 
+  filter(STATION == "11476") %>% 
+  filter(term == "date") %>% 
+  pull(estimate)
+df_data <- df_log10 %>% filter(STATION == "11476", preserve = TRUE)
+
+# Plot sample data and add regression line from lm model
+point_abline_plot <- ggplot(df_data, aes(x = date, y = log10_EC_val)) + 
+  geom_point() +  # Plot the sample data points
+  geom_abline(intercept = intercept, slope = slope, color = "blue") +  # Add regression line
+  theme_minimal() +  # Optional: use a minimal theme for aesthetics
+  labs(title = "Linear Regression Line on Station 11476 Sample Data", 
+       x = "Date", 
+       y = "Log10 EC val")  # Add labels
+
+# plot regression line and sample data
+plot(point_abline_plot)
+
+```
+
+Next, I used the regression statistics.
+
+```{r}
+# get data for a single station
+df_station <- df_log10 %>% filter(STATION == "11476")
+
+# Do regression
+model <- lm(log10_EC_val ~ date, df_station)
+
+# Get the summary of the model
+summary_model <- summary(model)
+
+# Print the summary
+print(summary_model)
+
+```
+
+Finally, I plotted the residuals of each regression model.
+
+```{r}
+
+# get data for a single station
+df_station <- df_log10 %>% filter(STATION == "11476")
+
+# Do regression
+model <- lm(log10_EC_val ~ date, df_station)
+
+# Get residuals
+df_res <- data.frame(date = df_station$date, residual = residuals(model))
+
+# Create plot rediduals
+point_residuals_plot <- ggplot(df_res, aes(x = date, y = residual)) + 
+  geom_point() +  # Plot the sample data points
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  theme_minimal() +  # Optional: use a minimal theme for aesthetics
+  labs(title = "Residuals of Linear Regression Line for Station 11476", 
+       x = "Date", 
+       y = "Residual")  # Add labels
+
+# Plot rediduals
+plot(point_residuals_plot)
+
+```
+
+## Calculate MDC using standard error of slope estimate
+
+Use the standard error estimates to proceed with calculating the MDCs for the stations.
+
+```{r}
+
+# Calculate MDC by station using base R
+
+# Split Data by Category
+data_split <- split(df_log10, df_log10$STATION)
+
+# Create function to be used to Fit Models and to get SE Slope for Each Category
+calculate_SE <- function(df) {
+  model <- lm(log10_EC_val ~ date, data = df)
+  summary_model <- summary(model)
+  
+  # Extract the standard error of the slope
+  SE_slope <- summary_model$coefficients["date", "Std. Error"]
+  
+  return(SE_slope)
+}
+
+# calculate SE for slope estimates by station, returns a list
+SE_results <- lapply(data_split, calculate_SE)
+
+# create data.frame of SE for slope estimates from list
+df_SE <- stack(unlist(SE_results))
+df_SE <- df_SE[, c("ind", "values")]
+names(df_SE) <- c("STATION", "SE_slope")
+df_N <- as.data.frame(table(df_log10$STATION))
+names(df_N) <- c("STATION", "N")
+
+df_SE <- inner_join(df_N, df_SE, by = "STATION")
+
+# Determine the critical t-value
+# Assuming a 95% confidence level and using n-2 degrees of freedom
+confidence_level <- 0.95
+# Add the degrees of freedom
+df_SE <- cbind(df_SE, deg_f = df_SE$N - 2)
+# Calculate critical t_values 
+df_SE <- cbind(df_SE, 
+               t_value = qt((1 - confidence_level) / 2, df_SE$deg_f))
+
+
+
+# Calculate MDC
+if(exists("df_MDC")) {rm(df_MDC)}
+df_MDC <- cbind(df_SE, MDC = df_SE$N  * df_SE$t_value * df_SE$SE_slope)
+df_MDC <- cbind(df_MDC, MDC_per = abs((1 - 10^(-df_MDC$MDC)) * 100))
+ 
+# Print the MDC
+print(df_MDC)
+
+```
+
+Here is a plot of the MDCs by station
+
+```{r}
+
+# Create bar plot
+barplot_MDC_single_slope <- 
+  ggplot(df_MDC, aes(x=reorder(STATION, MDC_per), y=MDC_per)) + 
+  geom_bar(stat='identity') +
+  geom_text(aes(
+    label=paste("SE = ", sprintf("%.2f", SE_slope * 10000))
+          , vjust=-0.5, color = "red")) + # Add SE labels above bars
+    geom_text(aes(
+    label=paste("N = ", sprintf("%.d", N))
+          , vjust=-1.75)) + # Add N labels above bars
+
+    theme_minimal() + 
+  labs(title='MDC by Station', x='Station', y='% MDC') +
+  scale_y_continuous(limits = c(0, 10), 
+                     labels = label_number(scale = 1, accuracy = 0.0)) +
+  theme(legend.position = "none")
+
+# plot barplot
+plot(barplot_MDC_single_slope)
+
+```
+
+From the plot above, we can judged several important factors.
+
+Lower MDC means we can detect smaller changes, so the lower the MDC means we can detect smaller changes in the E. coli levels that occur during implementation.
+
+Since the MDC is based on the standard error of the slope estimate, we can detect smaller changes when we have lower standard error.
+
+The SE depends on on several factors. A main one is the number of samples. This is very apparent in the larger changes needed (represented by the increasing MDC) among the stations.
+
+The larger the MDC, would require more samples in the post-implementation period.

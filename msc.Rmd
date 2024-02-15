@@ -430,3 +430,5 @@ Since the MDC is based on the standard error of the slope estimate, we can detec
 The SE depends on on several factors. A main one is the number of samples. This is very apparent in the larger changes needed (represented by the increasing MDC) among the stations.
 
 The larger the MDC, would require more samples in the post-implementation period.
+
+## MDC function for Varying N

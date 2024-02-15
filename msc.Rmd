@@ -474,9 +474,13 @@ No I tried the function for station 12301, which had the largest MDC
 
 ```{r}
 
-mdeol 
+df_cur <- df_log10 %>% filter(STATION == "12301") 
+str(df_cur)
 
-MDC <- calculateMDCWithAdditionalSamples(model, additional_samples, alpha, power)
+model_cur <- lm(log10_EC_val ~ date, df_cur)
+
+MDC <- calculateMDCWithAdditionalSamples(model_cur, additional_samples = 36, 
+                                         alpha = 0.05, power = 0.9)
 print(paste("MDC for", initial_n + additional_samples, "total samples:", MDC))
 
 

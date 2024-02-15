@@ -459,7 +459,7 @@ calculateMDCWithAdditionalSamples <- function(model, additional_samples, alpha, 
 }
 ```
 
-No I tried the function for station 12301, which had the largest MDC
+Now I tried the function for station 12301, which had the largest MDC
 
 ```{r}
 
@@ -471,10 +471,15 @@ model_cur <- lm(log10_EC_val ~ date, df_cur)
 initial_n <- length(model_cur$model[[1]])
 additional_samples <- 36
 
-MDC <- calculateMDCWithAdditionalSamples(model_cur,additional_samples, 
+MDC_cur <- calculateMDCWithAdditionalSamples(model_cur,0, 
                                          alpha = 0.05, power = 0.9)
 
-print(paste("MDC for", initial_n + additional_samples, "total samples:", MDC))
+MDC_add <- calculateMDCWithAdditionalSamples(model_cur,additional_samples, 
+                                         alpha = 0.05, power = 0.9)
+
+print(paste("MDC for", initial_n + additional_samples, "total samples:", 
+            sprintf("%f6", MDC_add), " compared to ", sprintf("%f6", MDC_cur),
+            " for ", initial_n, " initial samples"))
 
 
 ```

@@ -432,3 +432,52 @@ The SE depends on on several factors. A main one is the number of samples. This 
 The larger the MDC, would require more samples in the post-implementation period.
 
 ## MDC function for Varying N
+
+I used ChatGPT 4.0 to get a starting point for the function
+
+```{r}
+calculateMDCWithAdditionalSamples <- function(model, additional_samples, alpha, power) {
+  # Extract residuals and X values from the model
+  sigma <- sd(model$residuals) # Standard deviation of residuals
+  x_values <- model$model[[2]] # Assuming the second column in model data is X
+  initial_n <- length(x_values) # Current sample size
+  
+  # Calculate the sum of squares of X for the current data
+  SS_X_current <- sum((x_values - mean(x_values))^2)
+  
+  # Calculate the total number of samples after adding the additional samples
+  total_n <- initial_n + additional_samples
+  
+  # Assuming the variance of X remains constant, extrapolate SS_X for the total sample size
+  # This is a simplification and assumes the distribution of additional X values is similar to the current ones
+  SS_X_total <- SS_X_current * (total_n / initial_n)
+  
+  # Function to calculate MDC
+  calculateMDC <- function(n, alpha, sigma, SS_X, power) {
+    df <- n - 2
+    t_alpha <- qt(1 - alpha/2, df)
+    t_beta <- qt(power, df)
+    SE_b <- sigma / sqrt(SS_X)
+    MDC <- (t_alpha + t_beta) * SE_b
+    return(MDC)
+  }
+  
+  # Calculate MDC for the total number of samples
+  MDC <- calculateMDC(total_n, alpha, sigma, SS_X_total, power)
+  
+  return(MDC)
+}
+
+```
+
+No I tried the function for station 12301, which had the largest MDC
+
+```{r}
+
+mdeol 
+
+MDC <- calculateMDCWithAdditionalSamples(model, additional_samples, alpha, power)
+print(paste("MDC for", initial_n + additional_samples, "total samples:", MDC))
+
+
+```

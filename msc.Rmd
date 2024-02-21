@@ -413,7 +413,7 @@ barplot_MDC_single_slope <-
     theme_minimal() + 
   labs(title='MDC by Station', x='Station', y='% MDC') +
   scale_y_continuous(limits = c(0, 10), 
-                     labels = label_number(scale = 1, accuracy = 0.0)) +
+                     labels = label_number(scale = 1, accuracy = 0.1)) +
   theme(legend.position = "none")
 
 # plot barplot
@@ -464,7 +464,6 @@ Now I tried the function for station 12301, which had the largest MDC
 ```{r}
 
 df_cur <- df_log10 %>% filter(STATION == "12301") 
-str(df_cur)
 
 model_cur <- lm(log10_EC_val ~ date, df_cur)
 
@@ -478,8 +477,9 @@ MDC_add <- calculateMDCWithAdditionalSamples(model_cur,additional_samples,
                                          alpha = 0.05, power = 0.9)
 
 print(paste("MDC for", initial_n + additional_samples, "total samples:", 
-            sprintf("%f6", MDC_add), " compared to ", sprintf("%f6", MDC_cur),
-            " for ", initial_n, " initial samples"))
+            sprintf("%.2f", abs(10^(MDC_add) - 1) * 100)), "% compared to",
+            sprintf("%.2f", abs((1 - 10^(-MDC_cur)) * 100)),
+            "% for", initial_n, "initial samples"))
 
 
 ```

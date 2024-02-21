@@ -453,7 +453,7 @@ calculateMDCWithAdditionalSamples <- function(model, additional_samples, alpha, 
   
   # Calculate the MDC using the SE_b from the model
   # Note: This calculation assumes SE_b remains constant with additional samples, which might not be accurate
-  MDC <- (t_alpha + t_beta) * SE_b
+  MDC <- (t_alpha + t_beta) * SE_b * 365
   
   return(MDC)
 }
@@ -477,9 +477,11 @@ MDC_add <- calculateMDCWithAdditionalSamples(model_cur,additional_samples,
                                          alpha = 0.05, power = 0.9)
 
 print(paste("MDC for", initial_n + additional_samples, "total samples:", 
-            sprintf("%.2f", abs(10^(MDC_add) - 1) * 100)), "% compared to",
-            sprintf("%.2f", abs((1 - 10^(-MDC_cur)) * 100)),
+            sprintf("%.2f", abs(10^(MDC_add) - 1) * 100), "% compared to",
+            sprintf("%.2f", abs(10^(MDC_cur) - 1) * 100),
             "% for", initial_n, "initial samples"))
 
 
 ```
+
+I need a way to incorporate the x data into the regression statistics and MDC. I think the approach as is assumes that each additional sample is collected at a constant step in x (or time in my case).
